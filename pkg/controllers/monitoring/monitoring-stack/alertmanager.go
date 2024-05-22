@@ -25,6 +25,13 @@ func newAlertmanager(
 	}
 	replicas := int32(2)
 
+	// TMP
+	alertmanagerTLSSecretName := "cert-alertmanager-svc"
+	TLSKeyKey := "tls.key"
+	TLSCertKey := "tls.crt"
+	//TLSCaKey := "ca.crt"
+	alertmanagerTLSEnabled := false
+
 	am := &monv1.Alertmanager{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: monv1.SchemeGroupVersion.String(),
@@ -77,6 +84,28 @@ func newAlertmanager(
 	}
 	if alertmanagerCfg.Image != "" {
 		am.Spec.Image = ptr.To(alertmanagerCfg.Image)
+	}
+	if alertmanagerTLSEnabled {
+		am.Spec.Web = &monv1.AlertmanagerWebSpec{
+			WebConfigFileFields: monv1.WebConfigFileFields{
+				TLSConfig: &monv1.WebTLSConfig{
+					KeySecret: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: alertmanagerTLSSecretName,
+						},
+						Key: TLSKeyKey,
+					},
+					Cert: monv1.SecretOrConfigMap{
+						Secret: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: alertmanagerTLSSecretName,
+							},
+							Key: TLSCertKey,
+						},
+					},
+				},
+			},
+		}
 	}
 	return am
 }

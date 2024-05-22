@@ -118,6 +118,15 @@ func newPrometheus(
 
 	config := ms.Spec.PrometheusConfig
 
+	// TMP
+	prometheusTLSSecretName := "cert-prometheus-svc"
+	alertmanagerTLSSecretName := "cert-alertmanager-svc"
+	TLSKeyKey := "tls.key"
+	TLSCertKey := "tls.crt"
+	TLSCaKey := "ca.crt"
+	prometheusTLSEnabled := false
+	alertmanagerTLSEnabled := false
+
 	prometheus := &monv1.Prometheus{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: monv1.SchemeGroupVersion.String(),
@@ -199,6 +208,30 @@ func newPrometheus(
 		},
 	}
 
+	if prometheusTLSEnabled {
+		prometheus.Spec.CommonPrometheusFields.Web = &monv1.PrometheusWebSpec{
+			WebConfigFileFields: monv1.WebConfigFileFields{
+				TLSConfig: &monv1.WebTLSConfig{
+					KeySecret: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: prometheusTLSSecretName,
+						},
+						Key: TLSKeyKey,
+					},
+					Cert: monv1.SecretOrConfigMap{
+						Secret: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: prometheusTLSSecretName,
+							},
+							Key: TLSCertKey,
+						},
+					},
+				},
+			},
+		}
+		prometheus.Spec.Secrets = append(prometheus.Spec.Secrets, prometheusTLSSecretName)
+	}
+
 	if prometheusCfg.Image != "" {
 		prometheus.Spec.CommonPrometheusFields.Image = ptr.To(prometheusCfg.Image)
 	}
@@ -214,6 +247,33 @@ func newPrometheus(
 					Port:       intstr.FromString("web"),
 				},
 			},
+		}
+		if alertmanagerTLSEnabled {
+			prometheus.Spec.Alerting.Alertmanagers[0].Scheme = "https"
+			// NOTE: The following doesn't add the CA cert to the tls-assets secret, so it never gets mounted.
+			// Either I'm missing some configuration or the p-o fork has a bug or it's an upstream bug.
+			// I didn't find a mention of a similar bug anywhere though.
+/*			prometheus.Spec.Alerting.Alertmanagers[0].TLSConfig = &monv1.TLSConfig{
+				SafeTLSConfig: monv1.SafeTLSConfig{
+					CA: monv1.SecretOrConfigMap{
+						Secret: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: alertmanagerTLSSecretName,
+							},
+							Key: TLSCaKey,
+						},
+					},
+					ServerName: ms.Name + "-alertmanager",
+				},
+			}
+*/
+			prometheus.Spec.Secrets = append(prometheus.Spec.Secrets, alertmanagerTLSSecretName)
+			prometheus.Spec.Alerting.Alertmanagers[0].TLSConfig = &monv1.TLSConfig{
+				SafeTLSConfig: monv1.SafeTLSConfig{
+					ServerName: ms.Name + "-alertmanager",
+				},
+				CAFile: "/etc/prometheus/secrets/" + alertmanagerTLSSecretName + "/" + TLSCaKey,
+			}
 		}
 	}
 
@@ -347,6 +407,36 @@ func newThanosSidecarService(ms *stack.MonitoringStack, instanceSelectorKey stri
 }
 
 func newAdditionalScrapeConfigsSecret(ms *stack.MonitoringStack, name string) *corev1.Secret {
+	// TMP
+	prometheusTLSSecretName := "cert-prometheus-svc"
+	alertmanagerTLSSecretName := "cert-alertmanager-svc"
+	TLSCaKey := "ca.crt"
+	prometheusTLSEnabled := false
+	alertmanagerTLSEnabled := false
+
+
+	alertmanagerScheme := "http"
+	prometheusScheme := "http"
+
+	alertmanagerTLSConfig := ""
+	prometheusTLSConfig := ""
+
+	if alertmanagerTLSEnabled {
+		alertmanagerScheme = "https"
+		alertmanagerTLSConfig = `
+  tls_config:
+    ca_file: /etc/prometheus/secrets/` + alertmanagerTLSSecretName + `/` + TLSCaKey + `
+    server_name: ` + ms.Name + `-alertmanager
+`
+	}
+	if prometheusTLSEnabled {
+		prometheusScheme = "https"
+		prometheusTLSConfig = `
+  tls_config:
+    ca_file: /etc/prometheus/secrets/` + prometheusTLSSecretName + `/` + TLSCaKey + `
+    server_name: ` + ms.Name + `-prometheus
+`
+	}
 	return &corev1.Secret{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: corev1.SchemeGroupVersion.String(),
@@ -360,6 +450,8 @@ func newAdditionalScrapeConfigsSecret(ms *stack.MonitoringStack, name string) *c
 			AdditionalScrapeConfigsSelfScrapeKey: `
 - job_name: prometheus-self
   honor_labels: true
+  scheme: ` + prometheusScheme +
+  prometheusTLSConfig + `
   relabel_configs:
   - action: keep
     source_labels:
@@ -393,7 +485,8 @@ func newAdditionalScrapeConfigsSecret(ms *stack.MonitoringStack, name string) *c
   scrape_interval: 30s
   scrape_timeout: 10s
   metrics_path: /metrics
-  scheme: http
+  scheme: ` + alertmanagerScheme +
+  alertmanagerTLSConfig + `
   follow_redirects: true
   relabel_configs:
   - source_labels:
