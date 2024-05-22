@@ -121,11 +121,13 @@ func newPrometheus(
 	// TMP
 	prometheusTLSSecretName := "cert-prometheus-svc"
 	alertmanagerTLSSecretName := "cert-alertmanager-svc"
+	thanosTLSSecretName := "cert-thanos-sidecar-svc"
 	TLSKeyKey := "tls.key"
 	TLSCertKey := "tls.crt"
 	TLSCaKey := "ca.crt"
 	prometheusTLSEnabled := false
 	alertmanagerTLSEnabled := false
+	thanosTLSEnabled := true
 
 	prometheus := &monv1.Prometheus{
 		TypeMeta: metav1.TypeMeta{
@@ -230,6 +232,45 @@ func newPrometheus(
 			},
 		}
 		prometheus.Spec.Secrets = append(prometheus.Spec.Secrets, prometheusTLSSecretName)
+	}
+
+	if thanosTLSEnabled {
+		certVolume := corev1.Volume{
+			Name: "thanos-cert-volume",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: thanosTLSSecretName,
+				},
+			},
+		}
+		prometheus.Spec.Volumes = append(prometheus.Spec.Volumes, certVolume)
+		keyVolume := corev1.Volume{
+			Name: "thanos-key-volume",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: thanosTLSSecretName,
+				},
+			},
+		}
+		prometheus.Spec.Volumes = append(prometheus.Spec.Volumes, keyVolume)
+
+		prometheus.Spec.Thanos.VolumeMounts = []corev1.VolumeMount{
+			{
+				Name: "thanos-cert-volume",
+				MountPath: "/etc/prometheus/thanos-tls-assets/cert-secret",
+				ReadOnly: true,
+			},
+			{
+				Name: "thanos-key-volume",
+				MountPath: "/etc/prometheus/thanos-tls-assets/key-secret",
+				ReadOnly: true,
+			},
+		}
+
+		prometheus.Spec.Thanos.GRPCServerTLSConfig = &monv1.TLSConfig{
+			CertFile: "/etc/prometheus/thanos-tls-assets/cert-secret/" + TLSCertKey,
+			KeyFile: "/etc/prometheus/thanos-tls-assets/key-secret/" + TLSKeyKey,
+		}
 	}
 
 	if prometheusCfg.Image != "" {
