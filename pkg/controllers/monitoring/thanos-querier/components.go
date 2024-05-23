@@ -24,6 +24,11 @@ func thanosComponentReconcilers(thanos *msoapi.ThanosQuerier, sidecarUrls []stri
 }
 
 func newThanosQuerierDeployment(name string, spec *msoapi.ThanosQuerier, sidecarUrls []string, thanosCfg ThanosConfiguration) *appsv1.Deployment {
+	// TMP
+	thanosSidecarTLSEnabled := true
+	thanosSidecarTLSSecretName := "cert-thanos-sidecar-svc"
+	TLSCaKey := "ca.crt"
+
 	args := []string{
 		"query",
 		"--log.format=logfmt",
@@ -32,6 +37,13 @@ func newThanosQuerierDeployment(name string, spec *msoapi.ThanosQuerier, sidecar
 	}
 	for _, endpoint := range sidecarUrls {
 		args = append(args, fmt.Sprintf("--endpoint=%s", endpoint))
+		if thanosSidecarTLSEnabled {
+			args = append(args, fmt.Sprintf("--grpc-client-server-name=%s", endpoint[18:]))
+		}
+	}
+	if thanosSidecarTLSEnabled {
+		args = append(args, fmt.Sprintf("--grpc-client-tls-ca=/etc/thanos/tls-assets/ca-secret/%s", TLSCaKey))
+		args = append(args, "--grpc-client-tls-secure")
 	}
 
 	for _, rl := range spec.Spec.ReplicaLabels {
@@ -86,6 +98,13 @@ func newThanosQuerierDeployment(name string, spec *msoapi.ThanosQuerier, sidecar
 									Type: corev1.SeccompProfileTypeRuntimeDefault,
 								},
 							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name: "sidecar-ca",
+									MountPath: "/etc/thanos/tls-assets/ca-secret",
+									ReadOnly: true,
+								},
+							},
 						},
 					},
 					NodeSelector: map[string]string{
@@ -95,6 +114,16 @@ func newThanosQuerierDeployment(name string, spec *msoapi.ThanosQuerier, sidecar
 						RunAsNonRoot: ptr.To(true),
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "sidecar-ca",
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName: thanosSidecarTLSSecretName,
+								},
+							},
 						},
 					},
 				},
